@@ -26,7 +26,7 @@ type SlotId = u8;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Port(pub AgentId, pub SlotId);
 
-const ROOT: Port = Port(0, 0);
+const ROOT: Port = Port(0, 1);
 
 impl Port {
   pub fn agent(self) -> AgentId {
@@ -258,5 +258,5 @@ impl INet {
 }
 
 fn main() {
-  println!("Hello, world!");
+  INet::default().reduce(ROOT);
 }
