@@ -36,6 +36,14 @@ impl Port {
   pub fn slot(self) -> SlotId {
     self.1
   }
+
+  pub fn is_main(self) -> bool {
+    self.1 == 0
+  }
+
+  pub fn main(id: AgentId) -> Self {
+    Port(id, 0)
+  }
 }
 
 impl fmt::Display for Port {
@@ -171,7 +179,7 @@ impl INet {
   }
 
   #[inline(always)]
-  fn comm(&mut self, a: u8, b: u8) {
+  fn comm(&mut self, a: AgentId, b: AgentId) {
     let a_aux = self.enter(Port(a, 1));
     let b_aux = self.enter(Port(b, 1));
     self.link(a_aux, b_aux);
@@ -184,7 +192,13 @@ impl INet {
   }
 
   #[inline(always)]
-  fn anni(&mut self, a_kind: AgentKind, b_kind: AgentKind, a: u8, b: u8) {
+  fn anni(
+    &mut self,
+    a_kind: AgentKind,
+    b_kind: AgentKind,
+    a: AgentId,
+    b: AgentId,
+  ) {
     let a_new = self.alloc(a_kind);
     let b_new = self.alloc(b_kind);
 
@@ -206,7 +220,6 @@ impl INet {
   pub fn reduce(&mut self, root: Port) {
     let mut path = Vec::new();
     let mut prev = root;
-    println!("prev: {}", prev);
 
     loop {
       let next = self.enter(prev);
@@ -215,8 +228,8 @@ impl INet {
         return;
       }
 
-      if next.slot() == 0 {
-        if prev.slot() == 0 {
+      if next.is_main() {
+        if prev.is_main() {
           self.rewrite(prev.agent(), next.agent());
           prev = path.pop().unwrap();
           continue;
@@ -226,17 +239,17 @@ impl INet {
       }
 
       path.push(prev);
-      prev = Port(next.agent(), 0);
+      prev = Port::main(next.agent());
     }
   }
 
   pub fn normal(&mut self) {
-    let mut warp = vec![Port(0, 0)];
+    let mut warp = vec![ROOT];
 
     while let Some(prev) = warp.pop() {
       self.reduce(prev);
       let next = self.enter(prev);
-      if next == Port(0, 0) {
+      if next == ROOT {
         warp.push(Port(next.agent(), 1));
         warp.push(Port(next.agent(), 2));
       }
