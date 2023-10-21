@@ -1,18 +1,32 @@
+use std::fmt;
+
 use AgentKind::*;
 
 #[repr(u8)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AgentKind {
   Era = 0,
   Con,
   Dup,
 }
 
+impl fmt::Display for AgentKind {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Era => write!(f, "era"),
+      Con => write!(f, "con"),
+      Dup => write!(f, "dup"),
+    }
+  }
+}
+
 type AgentId = u8;
 type SlotId = u8;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Port(pub AgentId, pub SlotId);
+
+const ROOT: Port = Port(0, 0);
 
 impl Port {
   pub fn agent(self) -> AgentId {
@@ -24,12 +38,38 @@ impl Port {
   }
 }
 
+impl fmt::Display for Port {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "({}, {})", self.0, self.1)
+  }
+}
+
 #[derive(Clone, Copy)]
 pub struct Agent {
   pub main: Port,
   pub aux1: Port,
   pub aux2: Port,
   pub kind: AgentKind,
+}
+
+impl fmt::Display for Agent {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(
+      f,
+      "[{} {} {} {}]",
+      self.main, self.aux1, self.aux2, self.kind
+    )
+  }
+}
+
+impl fmt::Debug for Agent {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(
+      f,
+      "[{} {} {} {}]",
+      self.main, self.aux1, self.aux2, self.kind
+    )
+  }
 }
 
 impl Agent {
@@ -87,7 +127,7 @@ impl Default for INet {
 impl INet {
   #[inline(always)]
   pub fn new_id(&mut self) -> AgentId {
-    self.free.pop().unwrap_or(self.nodes.len() as u8)
+    self.free.pop().unwrap_or(self.nodes.len() as AgentId)
   }
 
   #[inline(always)]
@@ -111,6 +151,96 @@ impl INet {
   #[inline(always)]
   pub fn enter(&mut self, port: Port) -> Port {
     self.nodes[port.agent() as usize].port(port.slot())
+  }
+
+  #[inline(always)]
+  pub fn agent_kind(&self, id: AgentId) -> AgentKind {
+    self.nodes[id as usize].kind
+  }
+
+  #[inline(always)]
+  pub fn rewrite(&mut self, a: AgentId, b: AgentId) {
+    let a_kind = self.agent_kind(a);
+    let b_kind = self.agent_kind(b);
+
+    if a_kind == b_kind {
+      self.comm(a, b);
+    } else {
+      self.anni(a_kind, b_kind, a, b);
+    }
+  }
+
+  #[inline(always)]
+  fn comm(&mut self, a: u8, b: u8) {
+    let a_aux = self.enter(Port(a, 1));
+    let b_aux = self.enter(Port(b, 1));
+    self.link(a_aux, b_aux);
+    let a_aux = self.enter(Port(a, 2));
+    let b_aux = self.enter(Port(b, 2));
+    self.link(a_aux, b_aux);
+
+    self.free.push(a);
+    self.free.push(b);
+  }
+
+  #[inline(always)]
+  fn anni(&mut self, a_kind: AgentKind, b_kind: AgentKind, a: u8, b: u8) {
+    let a_new = self.alloc(a_kind);
+    let b_new = self.alloc(b_kind);
+
+    let aux = self.enter(Port(a, 1));
+    self.link(Port(b_new, 0), aux);
+    let aux = self.enter(Port(a, 2));
+    self.link(Port(b, 0), aux);
+    let aux = self.enter(Port(b, 1));
+    self.link(Port(a_new, 0), aux);
+    let aux = self.enter(Port(b, 2));
+    self.link(Port(a, 0), aux);
+
+    self.link(Port(a_new, 1), Port(b_new, 1));
+    self.link(Port(a_new, 2), Port(b, 1));
+    self.link(Port(a, 1), Port(b_new, 2));
+    self.link(Port(a, 2), Port(b, 2))
+  }
+
+  pub fn reduce(&mut self, root: Port) {
+    let mut path = Vec::new();
+    let mut prev = root;
+    println!("prev: {}", prev);
+
+    loop {
+      let next = self.enter(prev);
+
+      if next == ROOT {
+        return;
+      }
+
+      if next.slot() == 0 {
+        if prev.slot() == 0 {
+          self.rewrite(prev.agent(), next.agent());
+          prev = path.pop().unwrap();
+          continue;
+        } else {
+          return;
+        }
+      }
+
+      path.push(prev);
+      prev = Port(next.agent(), 0);
+    }
+  }
+
+  pub fn normal(&mut self) {
+    let mut warp = vec![Port(0, 0)];
+
+    while let Some(prev) = warp.pop() {
+      self.reduce(prev);
+      let next = self.enter(prev);
+      if next == Port(0, 0) {
+        warp.push(Port(next.agent(), 1));
+        warp.push(Port(next.agent(), 2));
+      }
+    }
   }
 }
 
