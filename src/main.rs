@@ -1,4 +1,8 @@
-use std::fmt;
+use std::{
+  collections::{HashMap, HashSet},
+  fmt,
+  hash::Hash,
+};
 
 use AgentKind::*;
 
@@ -23,7 +27,7 @@ impl fmt::Display for AgentKind {
 type AgentId = u8;
 type SlotId = u8;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Port(pub AgentId, pub SlotId);
 
 const ROOT: Port = Port(0, 1);
@@ -43,6 +47,14 @@ impl Port {
 
   pub fn main(id: AgentId) -> Self {
     Port(id, 0)
+  }
+
+  pub fn aux1(id: AgentId) -> Self {
+    Port(id, 1)
+  }
+
+  pub fn aux2(id: AgentId) -> Self {
+    Port(id, 2)
   }
 }
 
@@ -249,7 +261,7 @@ impl INet {
     while let Some(prev) = warp.pop() {
       self.reduce(prev);
       let next = self.enter(prev);
-      if next == ROOT {
+      if next.is_main() {
         warp.push(Port(next.agent(), 1));
         warp.push(Port(next.agent(), 2));
       }
@@ -257,6 +269,168 @@ impl INet {
   }
 }
 
+pub enum Term {
+  Era,
+  Var(String),
+  Lam(String, Box<Term>),
+  App(Box<Term>, Box<Term>),
+  Sup(Box<Term>, Box<Term>),
+  Dup(String, String, Box<Term>, Box<Term>),
+}
+
+impl fmt::Display for Term {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Era => write!(f, "*"),
+      Self::Var(name) => write!(f, "{}", name),
+      Self::Lam(name, body) => write!(f, "λ{name}. {body}"),
+      Self::App(func, argm) => write!(f, "({func} {argm})"),
+      Self::Sup(first, second) => write!(f, "{{{first} {second}}}"),
+      Self::Dup(first, second, val, next) => {
+        write!(f, "dup {first} {second} = {val}; {next}")
+      }
+    }
+  }
+}
+
+impl INet {
+  pub fn term_of(&mut self) -> Term {
+    self.readback(ROOT)
+  }
+
+  fn readback(&mut self, host: Port) -> Term {
+    fn name_of(
+      inet: &INet,
+      var_port: Port,
+      var_name: &mut HashMap<Port, String>,
+    ) -> String {
+      if inet.agent_kind(var_port.agent()) == Era {
+        return String::from("*");
+      }
+
+      if !var_name.contains_key(&var_port) {
+        let name = index_to_name(var_name.len() as u32 + 1);
+        var_name.insert(var_port, name.clone());
+      }
+
+      var_name.get(&var_port).cloned().unwrap()
+    }
+
+    fn reader(
+      inet: &mut INet,
+      next: Port,
+      var_name: &mut HashMap<Port, String>,
+      dups_vec: &mut Vec<Port>,
+      dups_set: &mut HashSet<Port>,
+      seen: &mut HashSet<Port>,
+    ) -> Term {
+      if seen.contains(&next) {
+        return Term::Var(String::from("..."));
+      }
+
+      seen.insert(next);
+
+      match inet.agent_kind(next.agent()) {
+        Era => Term::Era,
+        Con => match next.slot() {
+          0 => {
+            let name = name_of(inet, Port(next.agent(), 1), var_name);
+            let port = inet.enter(Port(next.agent(), 2));
+            let body = reader(inet, port, var_name, dups_vec, dups_set, seen);
+            let _ = inet.enter(Port(next.agent(), 1));
+            Term::Lam(name, Box::new(body))
+          }
+          1 => Term::Var(name_of(inet, next, var_name)),
+          _ => {
+            let port = inet.enter(Port::main(next.agent()));
+            let func = reader(inet, port, var_name, dups_vec, dups_set, seen);
+            let port = inet.enter(Port(next.agent(), 1));
+            let argm = reader(inet, port, var_name, dups_vec, dups_set, seen);
+            Term::App(Box::new(func), Box::new(argm))
+          }
+        },
+        Dup => match next.slot() {
+          0 => {
+            let port = inet.enter(Port::aux1(next.agent()));
+            let first = reader(inet, port, var_name, dups_vec, dups_set, seen);
+            let port = inet.enter(Port::aux2(next.agent()));
+            let second = reader(inet, port, var_name, dups_vec, dups_set, seen);
+            Term::Sup(Box::new(first), Box::new(second))
+          }
+          _ => {
+            if !dups_set.contains(&next) {
+              dups_set.insert(next);
+              dups_vec.push(next);
+            }
+            Term::Var(name_of(inet, next, var_name))
+          }
+        },
+      }
+    }
+
+    let mut binder_name = HashMap::new();
+    let mut dups_vec = Vec::new();
+    let mut dups_set = HashSet::new();
+    let mut seen = HashSet::new();
+
+    let host = self.enter(host);
+    let mut main = reader(
+      self,
+      host,
+      &mut binder_name,
+      &mut dups_vec,
+      &mut dups_set,
+      &mut seen,
+    );
+
+    while dups_vec.len() > 0 {
+      let dup = dups_vec.pop().unwrap();
+      let val = reader(
+        self,
+        dup,
+        &mut binder_name,
+        &mut dups_vec,
+        &mut dups_set,
+        &mut seen,
+      );
+
+      let first = name_of(self, Port(dup.agent(), 1), &mut binder_name);
+      let second = name_of(self, Port(dup.agent(), 2), &mut binder_name);
+
+      main = Term::Dup(first, second, Box::new(val), Box::new(main));
+    }
+
+    main
+  }
+}
+
+pub fn index_to_name(idx: u32) -> String {
+  let mut name = String::new();
+  let mut idx = idx;
+  while idx > 0 {
+    idx = idx - 1;
+    name.push(char::from_u32(97 + idx % 26).unwrap());
+    idx = idx / 26;
+  }
+  return name;
+}
+
 fn main() {
-  INet::default().reduce(ROOT);
+  let mut inet = INet::default();
+
+  inet.nodes = vec![
+    Agent::new(Port(0, 2), Port(0, 1), Port(0, 0), Con),
+    Agent::new(Port(0, 0), Port(0, 0), Port(0, 0), Con),
+    Agent::new(Port(0, 0), Port(0, 0), Port(0, 0), Con),
+    Agent::new(Port(0, 0), Port(0, 0), Port(0, 0), Con),
+  ];
+
+  inet.link(Port::aux1(0), Port::aux2(1));
+  inet.link(Port::aux1(1), Port::aux1(2));
+  inet.link(Port::aux2(2), Port::main(3));
+  inet.link(Port::aux1(3), Port::aux2(3));
+  inet.link(Port::main(1), Port::main(2));
+
+  inet.normal();
+  println!("{}", inet.term_of());
 }
