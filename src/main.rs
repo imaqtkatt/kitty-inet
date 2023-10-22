@@ -4,6 +4,7 @@ use std::{
   hash::Hash,
 };
 
+use chumsky::prelude::*;
 use AgentKind::*;
 
 #[repr(u8)]
@@ -269,6 +270,7 @@ impl INet {
   }
 }
 
+#[derive(Clone)]
 pub enum Term {
   Era,
   Var(String),
@@ -415,7 +417,59 @@ pub fn index_to_name(idx: u32) -> String {
   return name;
 }
 
+fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
+  let ident = text::ident().padded();
+
+  recursive(|term| {
+    let era = just('*').to(Term::Era);
+
+    let var = ident.map(|s| Term::Var(s)).boxed();
+
+    let lam = just('@')
+      .ignore_then(ident)
+      .then(term.clone())
+      .map(|(name, body)| Term::Lam(name, Box::new(body)))
+      .boxed();
+
+    let app = term
+      .clone()
+      .then(term.clone().repeated())
+      .foldl(|x, y| Term::App(Box::new(x), Box::new(y)))
+      .delimited_by(just('('), just(')'))
+      .boxed();
+
+    let sup = term
+      .clone()
+      .then(term.clone())
+      .delimited_by(just('{'), just('}'))
+      .map(|(first, second)| Term::Sup(Box::new(first), Box::new(second)))
+      .boxed();
+
+    let dup = just('%')
+      .padded()
+      .ignore_then(ident)
+      .then(ident)
+      .then_ignore(just('='))
+      .then(term.clone())
+      .then_ignore(just(';'))
+      .then(term.clone())
+      .map(|(((first, second), val), next)| {
+        Term::Dup(first, second, Box::new(val), Box::new(next))
+      })
+      .boxed();
+
+    choice((era, var, lam, app, sup, dup))
+  })
+  .then_ignore(end())
+}
+
 fn main() {
+  let res = parser().parse(r"% a b = batata; e");
+  match res {
+    Ok(term) => println!("{term}"),
+    Err(e) => println!("wtf? {e:?}"),
+  }
+
   let mut inet = INet::default();
 
   inet.nodes = vec![
