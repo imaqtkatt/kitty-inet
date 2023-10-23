@@ -28,8 +28,14 @@ impl fmt::Display for AgentKind {
 type AgentId = u8;
 type SlotId = u8;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Port(pub AgentId, pub SlotId);
+
+impl Hash for Port {
+  fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    self.0.hash(state);
+  }
+}
 
 const ROOT: Port = Port(0, 1);
 
@@ -140,7 +146,7 @@ impl Default for INet {
   fn default() -> Self {
     Self {
       nodes: vec![Agent::new(Port(0, 2), Port(0, 1), Port(0, 0), Era)],
-      free: Default::default(),
+      free: vec![],
     }
   }
 }
@@ -148,7 +154,7 @@ impl Default for INet {
 impl INet {
   #[inline(always)]
   pub fn new_id(&mut self) -> AgentId {
-    self.free.pop().unwrap_or(self.nodes.len() as AgentId)
+    self.free.pop().unwrap_or((self.nodes.len() - 1) as AgentId)
   }
 
   #[inline(always)]
@@ -193,11 +199,11 @@ impl INet {
 
   #[inline(always)]
   fn comm(&mut self, a: AgentId, b: AgentId) {
-    let a_aux = self.enter(Port(a, 1));
-    let b_aux = self.enter(Port(b, 1));
+    let a_aux = self.enter(Port::aux1(a));
+    let b_aux = self.enter(Port::aux1(b));
     self.link(a_aux, b_aux);
-    let a_aux = self.enter(Port(a, 2));
-    let b_aux = self.enter(Port(b, 2));
+    let a_aux = self.enter(Port::aux2(a));
+    let b_aux = self.enter(Port::aux2(b));
     self.link(a_aux, b_aux);
 
     self.free.push(a);
@@ -215,19 +221,18 @@ impl INet {
     let a_new = self.alloc(a_kind);
     let b_new = self.alloc(b_kind);
 
-    let aux = self.enter(Port(a, 1));
-    self.link(Port(b_new, 0), aux);
-    let aux = self.enter(Port(a, 2));
-    self.link(Port(b, 0), aux);
-    let aux = self.enter(Port(b, 1));
-    self.link(Port(a_new, 0), aux);
-    let aux = self.enter(Port(b, 2));
-    self.link(Port(a, 0), aux);
-
-    self.link(Port(a_new, 1), Port(b_new, 1));
-    self.link(Port(a_new, 2), Port(b, 1));
-    self.link(Port(a, 1), Port(b_new, 2));
-    self.link(Port(a, 2), Port(b, 2))
+    let aux = self.enter(Port::aux1(a));
+    self.link(Port::main(b_new), aux);
+    let aux = self.enter(Port::aux2(a));
+    self.link(Port::main(b), aux);
+    let aux = self.enter(Port::aux1(b));
+    self.link(Port::main(a_new), aux);
+    let aux = self.enter(Port::aux2(b));
+    self.link(Port::main(a), aux);
+    self.link(Port::aux1(a_new), Port::aux1(b_new));
+    self.link(Port::aux2(a_new), Port::aux1(b));
+    self.link(Port::aux1(a), Port::aux2(b_new));
+    self.link(Port::aux2(a), Port::aux2(b))
   }
 
   pub fn reduce(&mut self, root: Port) {
@@ -263,8 +268,8 @@ impl INet {
       self.reduce(prev);
       let next = self.enter(prev);
       if next.is_main() {
-        warp.push(Port(next.agent(), 1));
-        warp.push(Port(next.agent(), 2));
+        warp.push(Port::aux1(next.agent()));
+        warp.push(Port::aux2(next.agent()));
       }
     }
   }
@@ -440,7 +445,8 @@ fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
 
     let sup = term
       .clone()
-      .then(term.clone())
+      .padded()
+      .then(term.clone().padded())
       .delimited_by(just('{'), just('}'))
       .map(|(first, second)| Term::Sup(Box::new(first), Box::new(second)))
       .boxed();
@@ -461,28 +467,135 @@ fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
   })
 }
 
+impl INet {
+  fn encode(
+    &mut self,
+    term: &Term,
+    up: Port,
+    scope: &mut HashMap<String, Port>,
+    vars: &mut Vec<(String, Port)>,
+  ) -> Port {
+    match term {
+      Term::Era => {
+        let era = self.alloc(Era);
+        self.link(Port::aux1(era), Port::aux2(era));
+        Port::main(era)
+      }
+      Term::Var(name) => {
+        vars.push((name.clone(), up));
+        up
+      }
+      Term::Lam(name, body) => {
+        let lam = self.alloc(Con);
+        scope.insert(name.clone(), Port::aux1(lam));
+
+        let body = self.encode(body, Port::aux2(lam), scope, vars);
+        self.link(Port::aux2(lam), body);
+
+        Port::main(lam)
+      }
+      Term::App(func, argm) => {
+        let app = self.alloc(Con);
+
+        let func = self.encode(func, Port::main(app), scope, vars);
+        self.link(Port::main(app), func);
+
+        let argm = self.encode(argm, Port::aux1(app), scope, vars);
+        self.link(Port::aux1(app), argm);
+
+        Port::aux2(app)
+      }
+      Term::Sup(first, second) => {
+        let dup = self.alloc(Dup);
+
+        let first = self.encode(first, Port::aux1(dup), scope, vars);
+        self.link(Port::aux1(dup), first);
+
+        let second = self.encode(second, Port::aux2(dup), scope, vars);
+        self.link(Port::aux2(dup), second);
+
+        Port::main(dup)
+      }
+      Term::Dup(first, second, val, next) => {
+        let dup = self.alloc(Dup);
+
+        scope.insert(first.clone(), Port::aux1(dup));
+        scope.insert(second.clone(), Port::aux2(dup));
+
+        let val = self.encode(val, Port::main(dup), scope, vars);
+        self.link(val, Port::main(dup));
+
+        self.encode(next, up, scope, vars)
+      }
+    }
+  }
+
+  pub fn inject(&mut self, term: &Term, host: Port) {
+    let mut vars = Vec::new();
+    let mut scope = HashMap::new();
+
+    let main = self.encode(term, host, &mut scope, &mut vars);
+
+    for (ref name, var) in vars {
+      match scope.get(name) {
+        Some(next) => {
+          let next = *next;
+          if self.enter(next) == next {
+            self.link(var, next);
+          } else {
+            panic!("Variable '{name}' used more than once.");
+          }
+        }
+        None => panic!("Unbound variable '{name}'."),
+      }
+    }
+
+    for (_, port) in scope {
+      if self.enter(port) == port {
+        let era = self.alloc(Era);
+        self.link(Port::aux1(era), Port::aux2(era));
+        self.link(port, Port::main(era));
+      }
+    }
+
+    self.link(host, main);
+  }
+}
+
+impl Term {
+  pub fn to_net(&self) -> INet {
+    let mut inet = INet::default();
+    inet.inject(self, ROOT);
+    inet
+  }
+}
+
 fn main() {
-  let res = parser().parse(r"@f @x dup a b = f; (a (b x))");
+  let res = parser().parse(r"(@x x @y y)");
   match res {
-    Ok(term) => println!("{term}"),
+    Ok(term) => {
+      let mut inet = term.to_net();
+      inet.normal();
+      println!("res: {}", inet.term_of());
+    }
     Err(e) => println!("wtf? {e:?}"),
   }
 
-  let mut inet = INet::default();
+  // let mut inet = INet::default();
 
-  inet.nodes = vec![
-    Agent::new(Port(0, 2), Port(0, 1), Port(0, 0), Con),
-    Agent::new(Port(0, 0), Port(0, 0), Port(0, 0), Con),
-    Agent::new(Port(0, 0), Port(0, 0), Port(0, 0), Con),
-    Agent::new(Port(0, 0), Port(0, 0), Port(0, 0), Con),
-  ];
+  // inet.nodes = vec![
+  //   Agent::new(Port(0, 2), Port(0, 1), Port(0, 0), Con),
+  //   Agent::new(Port(0, 0), Port(0, 0), Port(0, 0), Con),
+  //   Agent::new(Port(0, 0), Port(0, 0), Port(0, 0), Con),
+  //   Agent::new(Port(0, 0), Port(0, 0), Port(0, 0), Con),
+  // ];
 
-  inet.link(Port::aux1(0), Port::aux2(1));
-  inet.link(Port::aux1(1), Port::aux1(2));
-  inet.link(Port::aux2(2), Port::main(3));
-  inet.link(Port::aux1(3), Port::aux2(3));
-  inet.link(Port::main(1), Port::main(2));
+  // inet.link(Port::aux1(0), Port::aux2(1));
+  // inet.link(Port::aux1(1), Port::aux1(2));
+  // inet.link(Port::aux2(2), Port::main(3));
+  // inet.link(Port::aux1(3), Port::aux2(3));
+  // inet.link(Port::main(1), Port::main(2));
 
-  inet.normal();
-  println!("{}", inet.term_of());
+  // inet.normal();
+  // println!("{}", inet.term_of());
 }
