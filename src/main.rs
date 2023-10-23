@@ -427,7 +427,7 @@ fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
 
     let lam = just('@')
       .ignore_then(ident)
-      .then(term.clone())
+      .then(term.clone().padded())
       .map(|(name, body)| Term::Lam(name, Box::new(body)))
       .boxed();
 
@@ -445,26 +445,24 @@ fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
       .map(|(first, second)| Term::Sup(Box::new(first), Box::new(second)))
       .boxed();
 
-    let dup = just('%')
-      .padded()
+    let dup = text::keyword("dup")
       .ignore_then(ident)
       .then(ident)
       .then_ignore(just('='))
-      .then(term.clone())
+      .then(term.clone().padded())
       .then_ignore(just(';'))
-      .then(term.clone())
+      .then(term.clone().padded())
       .map(|(((first, second), val), next)| {
         Term::Dup(first, second, Box::new(val), Box::new(next))
       })
       .boxed();
 
-    choice((era, var, lam, app, sup, dup))
+    choice((app, sup, dup, lam, var, era))
   })
-  .then_ignore(end())
 }
 
 fn main() {
-  let res = parser().parse(r"% a b = batata; e");
+  let res = parser().parse(r"@f @x dup a b = f; (a (b x))");
   match res {
     Ok(term) => println!("{term}"),
     Err(e) => println!("wtf? {e:?}"),
