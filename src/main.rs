@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::{
   collections::{HashMap, HashSet},
   fmt,
@@ -12,7 +13,7 @@ use AgentKind::*;
 pub enum AgentKind {
   Era = 0,
   Con,
-  Dup,
+  Dup { label: u8 },
 }
 
 impl fmt::Display for AgentKind {
@@ -20,7 +21,7 @@ impl fmt::Display for AgentKind {
     match self {
       Era => write!(f, "era"),
       Con => write!(f, "con"),
-      Dup => write!(f, "dup"),
+      Dup { label } => write!(f, "dup({label})"),
     }
   }
 }
@@ -28,7 +29,7 @@ impl fmt::Display for AgentKind {
 type AgentId = u8;
 type SlotId = u8;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Port(pub AgentId, pub SlotId);
 
 impl Hash for Port {
@@ -153,15 +154,18 @@ impl Default for INet {
 
 impl INet {
   #[inline(always)]
-  pub fn new_id(&mut self) -> AgentId {
-    self.free.pop().unwrap_or((self.nodes.len() - 1) as AgentId)
-  }
-
-  #[inline(always)]
   pub fn alloc(&mut self, kind: AgentKind) -> AgentId {
-    let id = self.new_id();
-    self.nodes[id as usize] = Agent::with_id(id, kind);
-    id
+    match self.free.pop() {
+      Some(id) => {
+        self.nodes[id as usize] = Agent::with_id(id, kind);
+        id
+      }
+      None => {
+        let id = self.nodes.len() as AgentId;
+        self.nodes.push(Agent::with_id(id, kind));
+        id
+      }
+    }
   }
 
   #[inline(always)]
@@ -248,6 +252,7 @@ impl INet {
 
       if next.is_main() {
         if prev.is_main() {
+          println!("here");
           self.rewrite(prev.agent(), next.agent());
           prev = path.pop().unwrap();
           continue;
@@ -356,7 +361,7 @@ impl INet {
             Term::App(Box::new(func), Box::new(argm))
           }
         },
-        Dup => match next.slot() {
+        Dup { label: _ } => match next.slot() {
           0 => {
             let port = inet.enter(Port::aux1(next.agent()));
             let first = reader(inet, port, var_name, dups_vec, dups_set, seen);
@@ -390,8 +395,7 @@ impl INet {
       &mut seen,
     );
 
-    while dups_vec.len() > 0 {
-      let dup = dups_vec.pop().unwrap();
+    while let Some(dup) = dups_vec.pop() {
       let val = reader(
         self,
         dup,
@@ -401,10 +405,12 @@ impl INet {
         &mut seen,
       );
 
-      let first = name_of(self, Port(dup.agent(), 1), &mut binder_name);
-      let second = name_of(self, Port(dup.agent(), 2), &mut binder_name);
+      if let AgentKind::Dup { label } = self.agent_kind(dup.agent()) {
+        let first = name_of(self, Port(label, 1), &mut binder_name);
+        let second = name_of(self, Port(label, 2), &mut binder_name);
 
-      main = Term::Dup(first, second, Box::new(val), Box::new(main));
+        main = Term::Dup(first, second, Box::new(val), Box::new(main));
+      }
     }
 
     main
@@ -440,7 +446,7 @@ fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
       .clone()
       .then(term.clone().repeated())
       .foldl(|x, y| Term::App(Box::new(x), Box::new(y)))
-      .delimited_by(just('('), just(')'))
+      .delimited_by(just('(').padded(), just(')').padded())
       .boxed();
 
     let sup = term
@@ -463,7 +469,9 @@ fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
       })
       .boxed();
 
-    choice((app, sup, dup, lam, var, era))
+    let idk = term.clone().delimited_by(just('('), just(')'));
+
+    choice((app, sup, dup, lam, var, era, idk))
   })
 }
 
@@ -474,6 +482,7 @@ impl INet {
     up: Port,
     scope: &mut HashMap<String, Port>,
     vars: &mut Vec<(String, Port)>,
+    dup_count: &mut u8,
   ) -> Port {
     match term {
       Term::Era => {
@@ -489,7 +498,7 @@ impl INet {
         let lam = self.alloc(Con);
         scope.insert(name.clone(), Port::aux1(lam));
 
-        let body = self.encode(body, Port::aux2(lam), scope, vars);
+        let body = self.encode(body, Port::aux2(lam), scope, vars, dup_count);
         self.link(Port::aux2(lam), body);
 
         Port::main(lam)
@@ -497,35 +506,37 @@ impl INet {
       Term::App(func, argm) => {
         let app = self.alloc(Con);
 
-        let func = self.encode(func, Port::main(app), scope, vars);
+        let func = self.encode(func, Port::main(app), scope, vars, dup_count);
         self.link(Port::main(app), func);
 
-        let argm = self.encode(argm, Port::aux1(app), scope, vars);
+        let argm = self.encode(argm, Port::aux1(app), scope, vars, dup_count);
         self.link(Port::aux1(app), argm);
 
         Port::aux2(app)
       }
       Term::Sup(first, second) => {
-        let dup = self.alloc(Dup);
+        let dup = self.alloc(Dup { label: 0 });
 
-        let first = self.encode(first, Port::aux1(dup), scope, vars);
+        let first = self.encode(first, Port::aux1(dup), scope, vars, dup_count);
         self.link(Port::aux1(dup), first);
 
-        let second = self.encode(second, Port::aux2(dup), scope, vars);
+        let second =
+          self.encode(second, Port::aux2(dup), scope, vars, dup_count);
         self.link(Port::aux2(dup), second);
 
         Port::main(dup)
       }
       Term::Dup(first, second, val, next) => {
-        let dup = self.alloc(Dup);
+        let dup = self.alloc(Dup { label: *dup_count });
+        *dup_count += 1;
 
         scope.insert(first.clone(), Port::aux1(dup));
         scope.insert(second.clone(), Port::aux2(dup));
 
-        let val = self.encode(val, Port::main(dup), scope, vars);
+        let val = self.encode(val, Port::main(dup), scope, vars, dup_count);
         self.link(val, Port::main(dup));
 
-        self.encode(next, up, scope, vars)
+        self.encode(next, up, scope, vars, dup_count)
       }
     }
   }
@@ -533,8 +544,9 @@ impl INet {
   pub fn inject(&mut self, term: &Term, host: Port) {
     let mut vars = Vec::new();
     let mut scope = HashMap::new();
+    let dup_count = &mut 1;
 
-    let main = self.encode(term, host, &mut scope, &mut vars);
+    let main = self.encode(term, host, &mut scope, &mut vars, dup_count);
 
     for (ref name, var) in vars {
       match scope.get(name) {
@@ -543,6 +555,7 @@ impl INet {
           if self.enter(next) == next {
             self.link(var, next);
           } else {
+            println!("scope: {:?}", scope);
             panic!("Variable '{name}' used more than once.");
           }
         }
@@ -571,12 +584,19 @@ impl Term {
 }
 
 fn main() {
-  let res = parser().parse(r"(@x x @y y)");
+  let test1 = "((@f @x dup a b = f; (a (b x))) (@g @y dup c d = g; (c (d y))))";
+  let test2 = "({@x x @y y} (*))";
+  let test3 = "((@f@x x) {@y y @z z})";
+
+  let res = parser().parse(test3);
   match res {
     Ok(term) => {
       let mut inet = term.to_net();
+      println!("nodes: {:#?}\n", &inet.nodes);
       inet.normal();
-      println!("res: {}", inet.term_of());
+      println!("normal: {:#?}\n", &inet.nodes);
+      let term = inet.term_of();
+      println!("res: {}", term);
     }
     Err(e) => println!("wtf? {e:?}"),
   }
