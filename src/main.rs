@@ -252,7 +252,6 @@ impl INet {
 
       if next.is_main() {
         if prev.is_main() {
-          println!("here");
           self.rewrite(prev.agent(), next.agent());
           prev = path.pop().unwrap();
           continue;
@@ -346,17 +345,17 @@ impl INet {
         Era => Term::Era,
         Con => match next.slot() {
           0 => {
-            let name = name_of(inet, Port(next.agent(), 1), var_name);
-            let port = inet.enter(Port(next.agent(), 2));
+            let name = name_of(inet, Port::aux1(next.agent()), var_name);
+            let port = inet.enter(Port::aux1(next.agent()));
             let body = reader(inet, port, var_name, dups_vec, dups_set, seen);
-            let _ = inet.enter(Port(next.agent(), 1));
+            let _ = inet.enter(Port::aux1(next.agent()));
             Term::Lam(name, Box::new(body))
           }
           1 => Term::Var(name_of(inet, next, var_name)),
           _ => {
             let port = inet.enter(Port::main(next.agent()));
             let func = reader(inet, port, var_name, dups_vec, dups_set, seen);
-            let port = inet.enter(Port(next.agent(), 1));
+            let port = inet.enter(Port::aux1(next.agent()));
             let argm = reader(inet, port, var_name, dups_vec, dups_set, seen);
             Term::App(Box::new(func), Box::new(argm))
           }
@@ -405,9 +404,9 @@ impl INet {
         &mut seen,
       );
 
-      if let AgentKind::Dup { label } = self.agent_kind(dup.agent()) {
-        let first = name_of(self, Port(label, 1), &mut binder_name);
-        let second = name_of(self, Port(label, 2), &mut binder_name);
+      if let Dup { label } = self.agent_kind(dup.agent()) {
+        let first = name_of(self, Port::aux1(label), &mut binder_name);
+        let second = name_of(self, Port::aux2(label), &mut binder_name);
 
         main = Term::Dup(first, second, Box::new(val), Box::new(main));
       }
