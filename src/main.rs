@@ -3,6 +3,7 @@ use std::{
   collections::{HashMap, HashSet},
   fmt,
   hash::Hash,
+  io,
 };
 
 use chumsky::prelude::*;
@@ -14,6 +15,22 @@ pub enum AgentKind {
   Era = 0,
   Con,
   Dup { label: u8 },
+  Num { val: isize },
+  Op2 { kind: OpKind },
+  Op1 { kind: OpKind, val: isize },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OpKind {
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Shl,
+  Shr,
+  Not,
+  Eql,
+  Neq,
 }
 
 impl fmt::Display for AgentKind {
@@ -22,6 +39,9 @@ impl fmt::Display for AgentKind {
       Era => write!(f, "era"),
       Con => write!(f, "con"),
       Dup { label } => write!(f, "dup({label})"),
+      Num { val } => write!(f, "#{}", val),
+      Op2 { kind } => write!(f, "{:?}", kind),
+      Op1 { kind, val } => write!(f, "{{{:?} #{}}}", kind, val),
     }
   }
 }
@@ -141,13 +161,15 @@ impl Agent {
 pub struct INet {
   pub nodes: Vec<Agent>,
   pub free: Vec<AgentId>,
+  pub rewrites: usize,
 }
 
 impl Default for INet {
   fn default() -> Self {
     Self {
       nodes: vec![Agent::new(Port(0, 2), Port(0, 1), Port(0, 0), Era)],
-      free: vec![],
+      free: Vec::new(),
+      rewrites: Default::default(),
     }
   }
 }
@@ -194,15 +216,53 @@ impl INet {
     let a_kind = self.agent_kind(a);
     let b_kind = self.agent_kind(b);
 
-    if a_kind == b_kind {
-      self.comm(a, b);
-    } else {
-      self.anni(a_kind, b_kind, a, b);
+    match (a_kind, b_kind) {
+      (Op1 { .. }, ..) => self.ope1(a, b),
+      (.., Op1 { .. }) => self.ope1(b, a),
+
+      (Era, Con) => self.comm(a_kind, b_kind, a, b),
+      (Con, Era) => self.comm(b_kind, a_kind, b, a),
+
+      (Con, Dup { .. }) => self.comm(a_kind, b_kind, a, b),
+      (Dup { .. }, Con) => self.comm(a_kind, b_kind, a, b),
+
+      (Era, Dup { .. }) => self.comm(a_kind, b_kind, a, b),
+      (Dup { .. }, Era) => self.comm(a_kind, b_kind, a, b),
+
+      (Con, Con) => self.anni(a, b),
+      (Dup { .. }, Dup { .. }) => self.anni(a, b),
+
+      (Num { .. }, Num { .. }) => todo!(),
+
+      (Con, Num { .. }) => todo!(),
+      (Num { .. }, Con) => todo!(),
+
+      (Dup { .. }, Num { .. }) => self.comm(a_kind, b_kind, a, b),
+      (Num { .. }, Dup { .. }) => self.comm(b_kind, a_kind, b, a),
+
+      (Era, Num { .. }) => todo!(),
+      (Num { .. }, Era) => todo!(),
+
+      (Era, Era) => todo!(),
+
+      (Op2 { .. }, Num { .. }) => self.ope2(a, b),
+      (Num { .. }, Op2 { .. }) => self.ope2(b, a),
+
+      (Op2 { .. }, Con) => self.comm(a_kind, b_kind, a, b),
+      (Con, Op2 { .. }) => self.comm(b_kind, a_kind, b, a),
+
+      (Era, Op2 { .. }) => todo!(),
+      (Op2 { .. }, Era) => todo!(),
+
+      (Op2 { .. }, Dup { .. }) => self.comm(a_kind, b_kind, a, b),
+      (Dup { .. }, Op2 { .. }) => self.comm(b_kind, a_kind, b, a),
+
+      (Op2 { .. }, Op2 { .. }) => todo!(),
     }
   }
 
   #[inline(always)]
-  fn comm(&mut self, a: AgentId, b: AgentId) {
+  fn anni(&mut self, a: AgentId, b: AgentId) {
     let a_aux = self.enter(Port::aux1(a));
     let b_aux = self.enter(Port::aux1(b));
     self.link(a_aux, b_aux);
@@ -215,7 +275,7 @@ impl INet {
   }
 
   #[inline(always)]
-  fn anni(
+  fn comm(
     &mut self,
     a_kind: AgentKind,
     b_kind: AgentKind,
@@ -239,6 +299,63 @@ impl INet {
     self.link(Port::aux2(a), Port::aux2(b))
   }
 
+  #[inline(always)]
+  pub fn ope2(&mut self, a: AgentId, b: AgentId) {
+    let mut p1 = Port::main(a);
+    let mut p2 = Port::main(b);
+    let op = self.agent_kind(p1.agent());
+    let l = self.agent_kind(p2.agent());
+
+    match (op, l) {
+      (Op2 { kind }, Num { val }) => {
+        let op1 = self.alloc(Op1 { kind, val });
+
+        let p1 = self.enter(Port::aux1(a));
+        self.link(Port::main(op1), p1);
+
+        let aux = self.enter(Port::aux2(a));
+        self.link(aux, Port::aux2(op1));
+      }
+      _ => unreachable!(),
+    };
+
+    self.free.push(a);
+    self.free.push(b);
+  }
+
+  #[inline(always)]
+  pub fn ope1(&mut self, a: AgentId, b: AgentId) {
+    let mut p1 = Port::main(a);
+    let mut p2 = Port::main(b);
+    let op = self.agent_kind(p1.agent());
+    let l = self.agent_kind(p2.agent());
+
+    match (op, l) {
+      (Op1 { kind, val }, Num { val: n }) => {
+        let res = match kind {
+          OpKind::Add => val + n,
+          OpKind::Sub => val - n,
+          OpKind::Mul => val * n,
+          OpKind::Div => val / n,
+          OpKind::Shl => val << n,
+          OpKind::Shr => val >> n,
+          OpKind::Not => !n,
+          OpKind::Eql => (val == n) as isize,
+          OpKind::Neq => (val != n) as isize,
+        };
+
+        let num = self.alloc(Num { val: res });
+
+        let aux = self.enter(Port::aux2(a));
+        self.link(aux, Port::main(num));
+      }
+      _ => unreachable!(),
+    };
+
+    self.free.push(a);
+    self.free.push(b);
+  }
+
   pub fn reduce(&mut self, root: Port) {
     let mut path = Vec::new();
     let mut prev = root;
@@ -252,6 +369,7 @@ impl INet {
 
       if next.is_main() {
         if prev.is_main() {
+          self.rewrites += 1;
           self.rewrite(prev.agent(), next.agent());
           prev = path.pop().unwrap();
           continue;
@@ -283,7 +401,9 @@ impl INet {
 pub enum Term {
   Era,
   Var(String),
+  Num(isize),
   Lam(String, Box<Term>),
+  Ope(OpKind, Box<Term>, Box<Term>),
   App(Box<Term>, Box<Term>),
   Sup(Box<Term>, Box<Term>),
   Dup(String, String, Box<Term>, Box<Term>),
@@ -294,7 +414,9 @@ impl fmt::Display for Term {
     match self {
       Self::Era => write!(f, "*"),
       Self::Var(name) => write!(f, "{}", name),
+      Self::Num(val) => write!(f, "#{}", val),
       Self::Lam(name, body) => write!(f, "λ{name}. {body}"),
+      Self::Ope(op, l, r) => write!(f, "({:?} {} {})", op, l, r),
       Self::App(func, argm) => write!(f, "({func} {argm})"),
       Self::Sup(first, second) => write!(f, "{{{first} {second}}}"),
       Self::Dup(first, second, val, next) => {
@@ -376,6 +498,9 @@ impl INet {
             Term::Var(name_of(inet, next, var_name))
           }
         },
+        Num { val } => Term::Num(val),
+        Op2 { .. } => unreachable!(),
+        Op1 { .. } => unreachable!(),
       }
     }
 
@@ -431,14 +556,45 @@ fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
   let ident = text::ident().padded();
 
   recursive(|term| {
-    let era = just('*').to(Term::Era);
+    let era = just('\'').to(Term::Era);
 
     let var = ident.map(|s| Term::Var(s)).boxed();
+
+    let num = text::digits(10)
+      .padded()
+      .map(|n: String| Term::Num(n.parse().unwrap()))
+      .boxed();
 
     let lam = just('@')
       .ignore_then(ident)
       .then(term.clone().padded())
       .map(|(name, body)| Term::Lam(name, Box::new(body)))
+      .boxed();
+
+    let add = just('+').to(OpKind::Add);
+    let sub = just('-').to(OpKind::Sub);
+    let mul = just('*').to(OpKind::Mul);
+    let div = just('/').to(OpKind::Div);
+    let shl = just('<').ignore_then(just('<')).to(OpKind::Shl);
+    let shr = just('>').ignore_then(just('>')).to(OpKind::Shr);
+    let eql = just('=').ignore_then(just('=')).to(OpKind::Eql);
+    let neq = just('!').ignore_then(just('=')).to(OpKind::Neq);
+    let ops = choice((add, sub, mul, div, shl, shr, eql, neq));
+
+    let not = just('~').to(OpKind::Not);
+    let op1 = not
+      .then(term.clone().padded())
+      .delimited_by(just('('), just(')'))
+      .map(|(kind, t)| {
+        Term::Ope(kind, Box::new(Term::Num(isize::MIN)), Box::new(t))
+      })
+      .boxed();
+
+    let op2 = ops
+      .then(term.clone().padded())
+      .then(term.clone().padded())
+      .delimited_by(just('('), just(')'))
+      .map(|((op, l), r)| Term::Ope(op, Box::new(l), Box::new(r)))
       .boxed();
 
     let app = term
@@ -470,7 +626,7 @@ fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
 
     let idk = term.clone().delimited_by(just('('), just(')'));
 
-    choice((app, sup, dup, lam, var, era, idk))
+    choice((app, sup, dup, lam, op2, op1, var, num, era, idk))
   })
 }
 
@@ -537,6 +693,23 @@ impl INet {
 
         self.encode(next, up, scope, vars, dup_count)
       }
+      Term::Num(val) => {
+        let num = self.alloc(Num { val: *val });
+
+        self.link(Port::aux1(num), Port::aux2(num));
+        Port::main(num)
+      }
+      Term::Ope(op, l, r) => {
+        let ope = self.alloc(Op2 { kind: *op });
+
+        let func = self.encode(l, Port::main(ope), scope, vars, dup_count);
+        self.link(Port::main(ope), func);
+
+        let argm = self.encode(r, Port::aux1(ope), scope, vars, dup_count);
+        self.link(Port::aux1(ope), argm);
+
+        Port::aux2(ope)
+      }
     }
   }
 
@@ -583,21 +756,43 @@ impl Term {
 }
 
 fn main() {
-  let test1 = "((@f @x dup a b = f; (a (b x))) (@g @y dup c d = g; (c (d y))))";
-  let test2 = "({@x x @y y} (*))";
-  let test3 = "((@f@x x) {@y y @z z})";
+  use std::io::Write;
 
-  let res = parser().parse(test3);
-  match res {
-    Ok(term) => {
-      let mut inet = term.to_net();
-      println!("nodes: {:#?}\n", &inet.nodes);
-      inet.normal();
-      println!("normal: {:#?}\n", &inet.nodes);
-      let term = inet.term_of();
-      println!("res: {}", term);
+  let mut loops = 0;
+
+  loop {
+    let mut line = String::new();
+
+    let w = format!("({})> ", loops);
+    io::stdout().write(w.as_bytes());
+    io::stdout().flush();
+
+    io::stdin().read_line(&mut line).unwrap();
+    line = String::from(line.trim());
+
+    match line.as_str() {
+      ".exit" => {
+        println!("Goodbye!");
+        std::process::exit(0)
+      }
+      _ => {}
     }
-    Err(e) => println!("wtf? {e:?}"),
+
+    let res = parser().parse(line);
+
+    match res {
+      Ok(term) => {
+        let mut inet = term.to_net();
+        println!("nodes: {:#?}\n", &inet.nodes);
+        inet.normal();
+        let rewrites = inet.rewrites;
+        println!("normal: {:#?}\n", &inet.nodes);
+        let term = inet.term_of();
+        loops += 1;
+        println!("res: {}\nrewrites: {}", term, rewrites);
+      }
+      Err(e) => println!("{e:?}"),
+    }
   }
 
   // let mut inet = INet::default();
