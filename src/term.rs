@@ -97,11 +97,11 @@ pub fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
       .boxed();
 
     let r#if = text::keyword("if")
-      .ignore_then(term.clone())
+      .ignore_then(term.clone().padded())
       .then_ignore(text::keyword("then"))
-      .then(term.clone())
+      .then(term.clone().padded())
       .then_ignore(text::keyword("else"))
-      .then(term.clone())
+      .then(term.clone().padded())
       .map(|((cond, r#then), r#else)| {
         Term::If(Box::new(cond), Box::new(r#then), Box::new(r#else))
       })

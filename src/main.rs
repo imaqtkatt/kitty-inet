@@ -217,46 +217,26 @@ impl INet {
   }
 
   #[inline(always)]
+  pub fn agent_is_truthy(&self, id: AgentId) -> bool {
+    match self.nodes[id as usize].kind {
+      Era => false,
+      Num { val } if val > 0 => true,
+      Num { .. } => false,
+      Con => todo!(),
+      Dup { label } => todo!(),
+      Op2 { kind } => todo!(),
+      Op1 { kind, val } => todo!(),
+      Cnd => todo!(),
+    }
+  }
+
+  #[inline(always)]
   pub fn rewrite(&mut self, a: AgentId, b: AgentId) {
     let a_kind = self.agent_kind(a);
     let b_kind = self.agent_kind(b);
 
     match (a_kind, b_kind) {
-      (Cnd, ..) => {
-        let cond = self.enter(Port::main(a));
-        let is_truthy = match self.agent_kind(cond.agent()) {
-          Era => false,
-          Num { val } if val > 0 => true,
-          Num { .. } => false,
-          Con => todo!(),
-          Dup { label } => todo!(),
-          Op2 { kind } => todo!(),
-          Op1 { kind, val } => todo!(),
-          Cnd => todo!(),
-        };
-        let branches = self.enter(Port::aux2(a));
-        let up = self.enter(Port::aux1(a));
-        let truthy = self.enter(Port::aux1(branches.agent()));
-        let falsy = self.enter(Port::aux2(branches.agent()));
-
-        let era = self.alloc(Era);
-
-        if is_truthy {
-          self.link(falsy, Port::main(era));
-          self.link(truthy, up);
-        } else {
-          self.link(truthy, Port::main(era));
-          self.link(falsy, up);
-        }
-
-        // println!("now: {:#?}", self.nodes);
-
-        // println!("up: {:?}", up);
-        // println!("branches: {:?}", branches);
-        // println!("truthy: {:?}", truthy);
-        // println!("falsy: {:?}", falsy);
-        // panic!();
-      }
+      (Cnd, ..) => self.cond(a, b),
       (.., Cnd) => todo!(),
 
       (Op1 { .. }, ..) => self.ope1(a, b),
@@ -398,6 +378,29 @@ impl INet {
     self.free(number);
   }
 
+  #[inline(always)]
+  pub fn cond(&mut self, cnd: AgentId, other: AgentId) {
+    let cond = self.enter(Port::main(cnd));
+    let is_truthy = self.agent_is_truthy(cond.agent());
+    let branches = self.enter(Port::aux2(cnd));
+    let up = self.enter(Port::aux1(cnd));
+    let truthy = self.enter(Port::aux1(branches.agent()));
+    let falsy = self.enter(Port::aux2(branches.agent()));
+
+    let era = self.alloc(Era);
+
+    if is_truthy {
+      self.link(falsy, Port::main(era));
+      self.link(truthy, up);
+    } else {
+      self.link(truthy, Port::main(era));
+      self.link(falsy, up);
+    }
+
+    self.free(cnd);
+    self.free(other);
+  }
+
   pub fn reduce(&mut self, root: Port) {
     let mut path = Vec::new();
     let mut prev = root;
@@ -512,9 +515,25 @@ impl INet {
           }
         },
         Num { val } => Term::Num(val),
+        Cnd => {
+          let cond_port = inet.enter(Port::main(next.agent()));
+          let cond =
+            reader(inet, cond_port, var_name, dups_vec, dups_set, seen);
+
+          let branches = inet.enter(Port::aux2(next.agent()));
+
+          let then_port = inet.enter(Port::aux1(branches.agent()));
+          let r#then =
+            reader(inet, then_port, var_name, dups_vec, dups_set, seen);
+
+          let else_port = inet.enter(Port::aux2(branches.agent()));
+          let r#else =
+            reader(inet, else_port, var_name, dups_vec, dups_set, seen);
+
+          Term::If(Box::new(cond), Box::new(r#then), Box::new(r#else))
+        }
         Op2 { .. } => unreachable!(),
         Op1 { .. } => unreachable!(),
-        Cnd { .. } => unreachable!(),
       }
     }
 
