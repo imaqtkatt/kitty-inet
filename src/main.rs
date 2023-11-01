@@ -21,6 +21,7 @@ pub enum AgentKind {
   Num { val: isize },
   Op2 { kind: OpKind },
   Op1 { kind: OpKind, val: isize },
+  Cnd,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -45,6 +46,7 @@ impl fmt::Display for AgentKind {
       Num { val } => write!(f, "#{}", val),
       Op2 { kind } => write!(f, "{:?}", kind),
       Op1 { kind, val } => write!(f, "{{{:?} #{}}}", kind, val),
+      Cnd => write!(f, "cond"),
     }
   }
 }
@@ -220,6 +222,43 @@ impl INet {
     let b_kind = self.agent_kind(b);
 
     match (a_kind, b_kind) {
+      (Cnd, ..) => {
+        let cond = self.enter(Port::main(a));
+        let is_truthy = match self.agent_kind(cond.agent()) {
+          Era => false,
+          Num { val } if val > 0 => true,
+          Num { .. } => false,
+          Con => todo!(),
+          Dup { label } => todo!(),
+          Op2 { kind } => todo!(),
+          Op1 { kind, val } => todo!(),
+          Cnd => todo!(),
+        };
+        let branches = self.enter(Port::aux2(a));
+        let up = self.enter(Port::aux1(a));
+        let truthy = self.enter(Port::aux1(branches.agent()));
+        let falsy = self.enter(Port::aux2(branches.agent()));
+
+        let era = self.alloc(Era);
+
+        if is_truthy {
+          self.link(falsy, Port::main(era));
+          self.link(truthy, up);
+        } else {
+          self.link(truthy, Port::main(era));
+          self.link(falsy, up);
+        }
+
+        // println!("now: {:#?}", self.nodes);
+
+        // println!("up: {:?}", up);
+        // println!("branches: {:?}", branches);
+        // println!("truthy: {:?}", truthy);
+        // println!("falsy: {:?}", falsy);
+        // panic!();
+      }
+      (.., Cnd) => todo!(),
+
       (Op1 { .. }, ..) => self.ope1(a, b),
       (.., Op1 { .. }) => self.ope1(b, a),
 
@@ -475,6 +514,7 @@ impl INet {
         Num { val } => Term::Num(val),
         Op2 { .. } => unreachable!(),
         Op1 { .. } => unreachable!(),
+        Cnd { .. } => unreachable!(),
       }
     }
 
@@ -605,6 +645,25 @@ impl INet {
         self.link(Port::aux1(ope), rhs);
 
         Port::aux2(ope)
+      }
+      Term::If(cond, r#then, r#else) => {
+        let r#if = self.alloc(Cnd);
+
+        let cond = self.encode(cond, Port::main(r#if), scope, vars, dup_count);
+        self.link(Port::main(r#if), cond);
+
+        let con = self.alloc(Con);
+        self.link(Port::aux2(r#if), Port::main(con));
+
+        let r#then =
+          self.encode(r#then, Port::aux1(con), scope, vars, dup_count);
+        self.link(Port::aux1(con), r#then);
+
+        let r#else =
+          self.encode(r#else, Port::aux2(con), scope, vars, dup_count);
+        self.link(Port::aux2(con), r#else);
+
+        Port::aux1(r#if)
       }
     }
   }

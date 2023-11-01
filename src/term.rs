@@ -13,6 +13,7 @@ pub enum Term {
   App(Box<Term>, Box<Term>),
   Sup(Box<Term>, Box<Term>),
   Dup(String, String, Box<Term>, Box<Term>),
+  If(Box<Term>, Box<Term>, Box<Term>),
 }
 
 impl Term {
@@ -95,9 +96,20 @@ pub fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
       })
       .boxed();
 
+    let r#if = text::keyword("if")
+      .ignore_then(term.clone())
+      .then_ignore(text::keyword("then"))
+      .then(term.clone())
+      .then_ignore(text::keyword("else"))
+      .then(term.clone())
+      .map(|((cond, r#then), r#else)| {
+        Term::If(Box::new(cond), Box::new(r#then), Box::new(r#else))
+      })
+      .boxed();
+
     let idk = term.clone().delimited_by(just('('), just(')'));
 
-    choice((app, sup, dup, lam, op2, op1, var, num, era, idk))
+    choice((app, sup, dup, r#if, lam, op2, op1, var, num, era, idk))
   })
 }
 
@@ -113,6 +125,9 @@ impl fmt::Display for Term {
       Self::Sup(first, second) => write!(f, "{{{first} {second}}}"),
       Self::Dup(first, second, val, next) => {
         write!(f, "dup {first} {second} = {val}; {next}")
+      }
+      Self::If(cond, r#then, r#else) => {
+        write!(f, "if {cond} then {} else {}", r#then, r#else)
       }
     }
   }
