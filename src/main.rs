@@ -760,22 +760,4 @@ fn main() {
       Err(e) => println!("{e:?}"),
     }
   }
-
-  // let mut inet = INet::default();
-
-  // inet.nodes = vec![
-  //   Agent::new(Port(0, 2), Port(0, 1), Port(0, 0), Con),
-  //   Agent::new(Port(0, 0), Port(0, 0), Port(0, 0), Con),
-  //   Agent::new(Port(0, 0), Port(0, 0), Port(0, 0), Con),
-  //   Agent::new(Port(0, 0), Port(0, 0), Port(0, 0), Con),
-  // ];
-
-  // inet.link(Port::aux1(0), Port::aux2(1));
-  // inet.link(Port::aux1(1), Port::aux1(2));
-  // inet.link(Port::aux2(2), Port::main(3));
-  // inet.link(Port::aux1(3), Port::aux2(3));
-  // inet.link(Port::main(1), Port::main(2));
-
-  // inet.normal();
-  // println!("{}", inet.term_of());
 }
