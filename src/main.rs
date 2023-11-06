@@ -15,7 +15,7 @@ use AgentKind::*;
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AgentKind {
-  Era = 0,
+  Era,
   Con,
   Dup { label: u8 },
   Num { val: isize },
