@@ -13,6 +13,7 @@ pub enum Term {
   App(Box<Term>, Box<Term>),
   Sup(Box<Term>, Box<Term>),
   Dup(String, String, Box<Term>, Box<Term>),
+  Let(String, Box<Term>, Box<Term>),
   If(Box<Term>, Box<Term>, Box<Term>),
 }
 
@@ -107,10 +108,31 @@ pub fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
       })
       .boxed();
 
+    let r#let = text::keyword("let")
+      .ignore_then(ident)
+      .then_ignore(just('='))
+      .then(term.clone().padded())
+      .then_ignore(text::keyword("in"))
+      .then(term.clone().padded())
+      .map(|((bind, val), next)| Term::Let(bind, Box::new(val), Box::new(next)))
+      .boxed();
+
     let idk = term.clone().delimited_by(just('('), just(')'));
 
-    choice((app, sup, dup, r#if, lam, op2, op1, var, num, era, idk))
+    choice((
+      r#let, app, sup, dup, r#if, lam, op2, op1, var, num, era, idk,
+    ))
   })
+}
+
+pub fn desugar(term: Term) -> Term {
+  match term {
+    Term::Let(bind, val, next) => {
+      let lam = Term::Lam(bind, next);
+      Term::App(Box::new(lam), val)
+    }
+    _ => term,
+  }
 }
 
 impl fmt::Display for Term {
@@ -125,6 +147,9 @@ impl fmt::Display for Term {
       Self::Sup(first, second) => write!(f, "{{{first} {second}}}"),
       Self::Dup(first, second, val, next) => {
         write!(f, "dup {first} {second} = {val}; {next}")
+      }
+      Self::Let(bind, val, next) => {
+        write!(f, "let {bind} = {val} in\n\t{next}")
       }
       Self::If(cond, r#then, r#else) => {
         write!(f, "if {cond} then {} else {}", r#then, r#else)

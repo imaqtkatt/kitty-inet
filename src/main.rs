@@ -93,7 +93,7 @@ impl Port {
 
 impl fmt::Display for Port {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "({}, {})", self.0, self.1)
+    write!(f, "({} {})", self.0, self.1)
   }
 }
 
@@ -107,21 +107,13 @@ pub struct Agent {
 
 impl fmt::Display for Agent {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(
-      f,
-      "[{} {} {} {}]",
-      self.main, self.aux1, self.aux2, self.kind
-    )
+    write!(f, "{}~{}+{}#{}", self.main, self.aux1, self.aux2, self.kind)
   }
 }
 
 impl fmt::Debug for Agent {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(
-      f,
-      "[{} {} {} {}]",
-      self.main, self.aux1, self.aux2, self.kind
-    )
+    write!(f, "{}~{}+{}#{}", self.main, self.aux1, self.aux2, self.kind)
   }
 }
 
@@ -207,7 +199,7 @@ impl INet {
   }
 
   #[inline(always)]
-  pub fn enter(&mut self, port: Port) -> Port {
+  pub fn enter(&self, port: Port) -> Port {
     self.nodes[port.agent() as usize].port(port.slot())
   }
 
@@ -684,6 +676,7 @@ impl INet {
 
         Port::aux1(r#if)
       }
+      Term::Let(..) => unreachable!(),
     }
   }
 
@@ -748,6 +741,7 @@ fn main() {
 
     match res {
       Ok(term) => {
+        let term = term::desugar(term);
         let mut inet = term.to_net();
         println!("nodes: {:#?}\n", &inet.nodes);
         inet.normal();
