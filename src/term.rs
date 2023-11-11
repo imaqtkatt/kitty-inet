@@ -1,7 +1,7 @@
 use chumsky::prelude::*;
 use std::fmt;
 
-use crate::{INet, OpKind, ROOT};
+use crate::runtime::{INet, OpKind, ROOT};
 
 #[derive(Clone)]
 pub enum Term {
@@ -15,14 +15,6 @@ pub enum Term {
   Dup(String, String, Box<Term>, Box<Term>),
   Let(String, Box<Term>, Box<Term>),
   If(Box<Term>, Box<Term>, Box<Term>),
-}
-
-impl Term {
-  pub fn to_net(&self) -> INet {
-    let mut inet = INet::default();
-    inet.inject(self, ROOT);
-    inet
-  }
 }
 
 pub fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
@@ -117,10 +109,10 @@ pub fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
       .map(|((bind, val), next)| Term::Let(bind, Box::new(val), Box::new(next)))
       .boxed();
 
-    let idk = term.clone().delimited_by(just('('), just(')'));
+    let delimited = term.clone().delimited_by(just('('), just(')'));
 
     choice((
-      r#let, app, sup, dup, r#if, lam, op2, op1, var, num, era, idk,
+      r#let, app, sup, dup, r#if, lam, op2, op1, var, num, era, delimited,
     ))
   })
 }
