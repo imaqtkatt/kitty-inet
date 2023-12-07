@@ -61,6 +61,7 @@ impl INet {
             Term::App(Box::new(func), Box::new(argm))
           }
         },
+        Bol { val } => Term::Bol(val),
         Dup { label: _ } => match next.slot() {
           0 => {
             let port = inet.enter(Port::aux1(next.agent()));

@@ -6,6 +6,7 @@ use crate::runtime::{INet, OpKind, ROOT};
 #[derive(Clone)]
 pub enum Term {
   Era,
+  Bol(bool),
   Var(String),
   Num(isize),
   Lam(String, Box<Term>),
@@ -21,7 +22,7 @@ pub fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
   let ident = text::ident().padded();
 
   recursive(|term| {
-    let era = just('\'').to(Term::Era);
+    let era = just('.').to(Term::Era);
 
     let var = ident.map(|s| Term::Var(s)).boxed();
 
@@ -109,9 +110,13 @@ pub fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
       .map(|((bind, val), next)| Term::Let(bind, Box::new(val), Box::new(next)))
       .boxed();
 
+    let r#true = text::keyword("true").to(Term::Bol(true)).boxed();
+    let r#false = text::keyword("false").to(Term::Bol(false)).boxed();
+
     let delimited = term.clone().delimited_by(just('('), just(')'));
 
     choice((
+      r#true, r#false,
       r#let, app, sup, dup, r#if, lam, op2, op1, var, num, era, delimited,
     ))
   })
@@ -131,6 +136,7 @@ impl fmt::Display for Term {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
       Self::Era => write!(f, "*"),
+      Self::Bol(b) => write!(f, "{b}"),
       Self::Var(name) => write!(f, "{}", name),
       Self::Num(val) => write!(f, "#{}", val),
       Self::Lam(name, body) => write!(f, "λ{name}. {body}"),

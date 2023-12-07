@@ -28,6 +28,11 @@ impl INet {
         self.link(Port::aux1(era), Port::aux2(era));
         Port::main(era)
       }
+      Term::Bol(bool) => {
+        let b = self.alloc(Bol { val: *bool });
+        self.link(Port::aux1(b), Port::aux2(b));
+        Port::main(b)
+      }
       Term::Var(name) => {
         vars.push((name.clone(), up));
         up
