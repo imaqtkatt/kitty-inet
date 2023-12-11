@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-  runtime::{AgentKind::*, INet, OpKind, Port, ROOT},
+  runtime::{AgentKind::*, INet, Port, ROOT},
   term::Term,
 };
 

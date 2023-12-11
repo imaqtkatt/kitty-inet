@@ -205,11 +205,11 @@ impl INet {
       Era => false,
       Num { val } => val == 1,
       Bol { val } => val,
-      Con => todo!(),
-      Dup { label } => todo!(),
-      Op2 { kind } => todo!(),
-      Op1 { kind, val } => todo!(),
-      Cnd => todo!(),
+      Con => false,
+      Dup { label: _ } => false,
+      Op2 { kind: _ } => false,
+      Op1 { kind: _, val: _ } => false,
+      Cnd => unreachable!(),
     }
   }
 
@@ -220,48 +220,48 @@ impl INet {
 
     match (a_kind, b_kind) {
       (Cnd, ..) => self.cond(a, b),
-      (.., Cnd) => todo!(),
-      
+      (.., Cnd) => self.cond(b, a),
+
       (Op1 { .. }, ..) => self.ope1(a, b),
       (.., Op1 { .. }) => self.ope1(b, a),
-      
+
       (Era, Con) => self.comm(a_kind, b_kind, a, b),
       (Con, Era) => self.comm(b_kind, a_kind, b, a),
-      
+
       (Con, Dup { .. }) => self.comm(a_kind, b_kind, a, b),
       (Dup { .. }, Con) => self.comm(a_kind, b_kind, a, b),
-      
+
       (Era, Dup { .. }) => self.comm(a_kind, b_kind, a, b),
       (Dup { .. }, Era) => self.comm(a_kind, b_kind, a, b),
-      
+
       (Con, Con) => self.anni(a, b),
       (Dup { .. }, Dup { .. }) => self.anni(a, b),
-      
+
       (Num { .. }, Num { .. }) => todo!(),
-      
+
       (Con, Num { .. }) => self.comm(a_kind, b_kind, a, b),
       (Num { .. }, Con) => self.comm(b_kind, a_kind, b, a),
-      
+
       (Dup { .. }, Num { .. }) => self.comm(a_kind, b_kind, a, b),
       (Num { .. }, Dup { .. }) => self.comm(b_kind, a_kind, b, a),
-      
-      (Era, Num { .. }) => todo!(),
-      (Num { .. }, Era) => todo!(),
-      
+
+      (Era, Num { .. }) => self.comm(a_kind, b_kind, a, b),
+      (Num { .. }, Era) => self.comm(a_kind, b_kind, a, b),
+
       (Era, Era) => todo!(),
-      
+
       (Op2 { .. }, Num { .. }) => self.ope2(a, b),
       (Num { .. }, Op2 { .. }) => self.ope2(b, a),
-      
+
       (Op2 { .. }, Con) => self.comm(a_kind, b_kind, a, b),
       (Con, Op2 { .. }) => self.comm(b_kind, a_kind, b, a),
-      
-      (Era, Op2 { .. }) => todo!(),
-      (Op2 { .. }, Era) => todo!(),
-      
+
+      (Era, Op2 { .. }) => self.comm(a_kind, b_kind, a, b),
+      (Op2 { .. }, Era) => self.comm(a_kind, b_kind, a, b),
+
       (Op2 { .. }, Dup { .. }) => self.comm(a_kind, b_kind, a, b),
       (Dup { .. }, Op2 { .. }) => self.comm(b_kind, a_kind, b, a),
-      
+
       (Op2 { .. }, Op2 { .. }) => todo!(),
 
       (Con, Bol { .. }) => self.bool(a, b),
@@ -312,8 +312,8 @@ impl INet {
 
   #[inline(always)]
   pub fn ope2(&mut self, operator: AgentId, number: AgentId) {
-    let mut p1 = Port::main(operator);
-    let mut p2 = Port::main(number);
+    let p1 = Port::main(operator);
+    let p2 = Port::main(number);
     let op = self.agent_kind(p1.agent());
     let l = self.agent_kind(p2.agent());
 
@@ -336,8 +336,8 @@ impl INet {
 
   #[inline(always)]
   pub fn ope1(&mut self, operator: AgentId, number: AgentId) {
-    let mut p1 = Port::main(operator);
-    let mut p2 = Port::main(number);
+    let p1 = Port::main(operator);
+    let p2 = Port::main(number);
     let op = self.agent_kind(p1.agent());
     let l = self.agent_kind(p2.agent());
 
@@ -368,11 +368,10 @@ impl INet {
   }
 
   #[inline(always)]
-  pub fn cond(&mut self, cnd: AgentId, other: AgentId) {
-    let cond = self.enter(Port::main(cnd));
-    let is_truthy = self.agent_is_truthy(cond.agent());
-    let branches = self.enter(Port::aux2(cnd));
-    let up = self.enter(Port::aux1(cnd));
+  pub fn cond(&mut self, branch: AgentId, condition: AgentId) {
+    let is_truthy = self.agent_is_truthy(condition);
+    let branches = self.enter(Port::aux2(branch));
+    let up = self.enter(Port::aux1(branch));
     let truthy = self.enter(Port::aux1(branches.agent()));
     let falsy = self.enter(Port::aux2(branches.agent()));
 
@@ -386,8 +385,8 @@ impl INet {
       self.link(falsy, up);
     }
 
-    self.free(cnd);
-    self.free(other);
+    self.free(branch);
+    self.free(condition);
   }
 
   #[inline(always)]
@@ -397,7 +396,7 @@ impl INet {
     let b = self.agent_kind(bol);
     let up = self.enter(Port::aux2(app));
 
-    let mut new_bol = false;
+    let new_bol: bool;
     match (a, b) {
       (Bol { val: b1 }, Bol { val: b2 }) => {
         if b1 == true && b2 == true {

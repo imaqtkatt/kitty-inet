@@ -1,7 +1,7 @@
 use chumsky::prelude::*;
 use std::fmt;
 
-use crate::runtime::{INet, OpKind, ROOT};
+use crate::runtime::OpKind;
 
 #[derive(Clone)]
 pub enum Term {
@@ -22,7 +22,7 @@ pub fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
   let ident = text::ident().padded();
 
   recursive(|term| {
-    let era = just('.').to(Term::Era);
+    let era = just('(').ignore_then(just(')')).to(Term::Era);
 
     let var = ident.map(|s| Term::Var(s)).boxed();
 
@@ -116,8 +116,8 @@ pub fn parser() -> impl Parser<char, Term, Error = Simple<char>> {
     let delimited = term.clone().delimited_by(just('('), just(')'));
 
     choice((
-      r#true, r#false,
-      r#let, app, sup, dup, r#if, lam, op2, op1, var, num, era, delimited,
+      r#true, r#false, r#let, app, sup, dup, r#if, lam, op2, op1, var, num,
+      era, delimited,
     ))
   })
 }
