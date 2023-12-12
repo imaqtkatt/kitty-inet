@@ -1,5 +1,4 @@
 use chumsky::prelude::*;
-use std::fmt;
 
 use crate::runtime::OpKind;
 
@@ -129,29 +128,5 @@ pub fn desugar(term: Term) -> Term {
       Term::App(Box::new(lam), val)
     }
     _ => term,
-  }
-}
-
-impl fmt::Display for Term {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      Self::Era => write!(f, "*"),
-      Self::Bol(b) => write!(f, "{b}"),
-      Self::Var(name) => write!(f, "{}", name),
-      Self::Num(val) => write!(f, "#{}", val),
-      Self::Lam(name, body) => write!(f, "λ{name}. {body}"),
-      Self::Ope(op, l, r) => write!(f, "({:?} {} {})", op, l, r),
-      Self::App(func, argm) => write!(f, "({func} {argm})"),
-      Self::Sup(first, second) => write!(f, "{{{first} {second}}}"),
-      Self::Dup(first, second, val, next) => {
-        write!(f, "dup {first} {second} = {val}; {next}")
-      }
-      Self::Let(bind, val, next) => {
-        write!(f, "let {bind} = {val} in\n\t{next}")
-      }
-      Self::If(cond, r#then, r#else) => {
-        write!(f, "if {cond} then {} else {}", r#then, r#else)
-      }
-    }
   }
 }

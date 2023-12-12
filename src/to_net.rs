@@ -20,7 +20,7 @@ impl INet {
     up: Port,
     scope: &mut HashMap<String, Port>,
     vars: &mut Vec<(String, Port)>,
-    dup_count: &mut u8,
+    dup_count: &mut u32,
   ) -> Port {
     match term {
       Term::Era => {

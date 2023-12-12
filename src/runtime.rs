@@ -7,7 +7,7 @@ pub enum AgentKind {
   Era,
   Con,
   Bol { val: bool },
-  Dup { label: u8 },
+  Dup { label: u32 },
   Num { val: isize },
   Op2 { kind: OpKind },
   Op1 { kind: OpKind, val: isize },
@@ -27,23 +27,8 @@ pub enum OpKind {
   Neq,
 }
 
-impl fmt::Display for AgentKind {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      Era => write!(f, "era"),
-      Con => write!(f, "con"),
-      Bol { val } => write!(f, "%{val}"),
-      Dup { label } => write!(f, "dup({label})"),
-      Num { val } => write!(f, "#{}", val),
-      Op2 { kind } => write!(f, "{:?}", kind),
-      Op1 { kind, val } => write!(f, "{{{:?} #{}}}", kind, val),
-      Cnd => write!(f, "cond"),
-    }
-  }
-}
-
-type AgentId = u8;
-type SlotId = u8;
+type AgentId = u32;
+type SlotId = u32;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Port(pub AgentId, pub SlotId);
@@ -82,12 +67,6 @@ impl Port {
   }
 }
 
-impl fmt::Display for Port {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "({} {})", self.0, self.1)
-  }
-}
-
 #[derive(Clone, Copy)]
 pub struct Agent {
   pub main: Port,
@@ -96,15 +75,13 @@ pub struct Agent {
   pub kind: AgentKind,
 }
 
-impl fmt::Display for Agent {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}~{}+{}#{}", self.main, self.aux1, self.aux2, self.kind)
-  }
-}
-
 impl fmt::Debug for Agent {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}~{}+{}#{}", self.main, self.aux1, self.aux2, self.kind)
+    write!(
+      f,
+      "[{} {} {}]{{{}}}",
+      self.main, self.aux1, self.aux2, self.kind
+    )
   }
 }
 

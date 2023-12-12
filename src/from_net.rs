@@ -36,28 +36,29 @@ impl INet {
       dups_set: &mut HashSet<Port>,
       seen: &mut HashSet<Port>,
     ) -> Term {
-      if seen.contains(&next) {
+      if !seen.insert(next) {
         return Term::Var(String::from("..."));
       }
-
-      seen.insert(next);
 
       match inet.agent_kind(next.agent()) {
         Era => Term::Era,
         Con => match next.slot() {
           0 => {
-            let name = name_of(inet, Port::aux1(next.agent()), var_name);
-            let port = inet.enter(Port::aux1(next.agent()));
-            let body = reader(inet, port, var_name, dups_vec, dups_set, seen);
-            let _ = inet.enter(Port::aux1(next.agent()));
+            let arg_port = Port::aux1(next.agent());
+            let name = name_of(inet, arg_port, var_name);
+            let body_port = inet.enter(Port::aux2(next.agent()));
+            let body =
+              reader(inet, body_port, var_name, dups_vec, dups_set, seen);
             Term::Lam(name, Box::new(body))
           }
           1 => Term::Var(name_of(inet, next, var_name)),
           _ => {
-            let port = inet.enter(Port::main(next.agent()));
-            let func = reader(inet, port, var_name, dups_vec, dups_set, seen);
-            let port = inet.enter(Port::aux1(next.agent()));
-            let argm = reader(inet, port, var_name, dups_vec, dups_set, seen);
+            let func_port = inet.enter(Port::main(next.agent()));
+            let func =
+              reader(inet, func_port, var_name, dups_vec, dups_set, seen);
+            let argm_port = inet.enter(Port::aux1(next.agent()));
+            let argm =
+              reader(inet, argm_port, var_name, dups_vec, dups_set, seen);
             Term::App(Box::new(func), Box::new(argm))
           }
         },

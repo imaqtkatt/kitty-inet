@@ -1,3 +1,4 @@
+pub mod display;
 pub mod from_net;
 pub mod runtime;
 pub mod term;
@@ -44,10 +45,10 @@ fn main() {
       Ok(term) => {
         let term = term::desugar(term);
         let mut inet = term.to_net();
-        println!("nodes: {:#?}\n", &inet.nodes);
+        println!("nodes: {:#}", &inet);
         inet.normal();
         let rewrites = inet.rewrites;
-        println!("normal: {:#?}\n", &inet.nodes);
+        println!("normal: {:#}", &inet);
         let term = inet.term_of();
         loops += 1;
         println!("res: {}\nrewrites: {}", term, rewrites);
